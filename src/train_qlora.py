@@ -44,18 +44,27 @@ def main():
 
     # 4. Dynamic Class Patching for Custom Model Sharding
     # Custom architectures require explicit block definitions to let accelerate shard them layer-by-layer.
-    model_path = os.path.abspath(model_name)
-    if os.path.isdir(model_path):
+    # We load the Config first to trigger HF's dynamic module registration in sys.modules.
+    from transformers import AutoConfig
+    print("⚙️ Triggering dynamic module registration via AutoConfig...")
+    try:
+        config_obj = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+        
+        # Scan sys.modules and inject _no_split_modules directly into the live registered class
         import sys
-        if model_path not in sys.path:
-            sys.path.append(model_path)
-        try:
-            from modeling_nemotron_h import NemotronHModel
-            # Prevent splitting inside individual decoder blocks, allowing sharding between blocks
-            NemotronHModel._no_split_modules = ["NemotronHBlock"]
-            print("⚙️ Dynamic Patch Applied: Set NemotronHModel._no_split_modules = ['NemotronHBlock']")
-        except ImportError:
-            print("⚠️ Could not import modeling_nemotron_h directly to patch _no_split_modules. Relying on default.")
+        patched = False
+        for mod_name, module in list(sys.modules.items()):
+            if mod_name.endswith("modeling_nemotron_h") and module is not None:
+                if hasattr(module, "NemotronHModel"):
+                    model_cls = getattr(module, "NemotronHModel")
+                    model_cls._no_split_modules = ["NemotronHBlock"]
+                    print(f"⚙️ Dynamic Patch Applied: Set {mod_name}.NemotronHModel._no_split_modules = ['NemotronHBlock']")
+                    patched = True
+                    break
+        if not patched:
+            print("⚠️ Could not locate NemotronHModel in sys.modules to apply the sharding patch.")
+    except Exception as e:
+        print(f"⚠️ Could not execute dynamic class patching: {e}")
 
     # 5. Load Model with Quantization
     print("📥 Loading model sharded across GPUs in 4-bit with custom max_memory rules...")
