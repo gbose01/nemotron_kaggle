@@ -44,11 +44,12 @@ def main():
 
     # 4. Dynamic Class Patching for Custom Model Sharding
     # Custom architectures require explicit block definitions to let accelerate shard them layer-by-layer.
-    # We load the Config first to trigger HF's dynamic module registration in sys.modules.
-    from transformers import AutoConfig
-    print("⚙️ Triggering dynamic module registration via AutoConfig...")
+    # We trigger dynamic module registration in sys.modules using HF's dynamic module helper.
+    from transformers.dynamic_module_utils import get_class_from_dynamic_module
+    print("⚙️ Triggering dynamic module registration via get_class_from_dynamic_module...")
     try:
-        config_obj = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+        # This loads and registers the custom model class in sys.modules without allocating weight memory!
+        _ = get_class_from_dynamic_module("NemotronHForCausalLM", model_name)
         
         # Scan sys.modules and inject _no_split_modules directly into the live registered class
         import sys
