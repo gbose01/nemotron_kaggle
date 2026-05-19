@@ -1,0 +1,8 @@
+.venv/
+outputs/
+__pycache__/
+.DS_Store
+submission.zip
+baseline_results.csv
+*.csv
+!data/*.csv

@@ -1,0 +1,48 @@
+# 🏆 Optimal Sparse MoE Megatron-Parallelism & SFT Configuration
+
+model:
+  base_model_name: "NVIDIA/Nemotron-3-Nano-30B-Base"
+  precision: "bfloat16"
+  max_seq_length: 8192
+  max_gen_tokens: 7680
+
+lora:
+  r: 32                  # CRITICAL: Maximum allowed rank under Kaggle constraints
+  alpha: 64              # Standard scaling (2 * r)
+  dropout: 0.05
+  bias: "none"
+  target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+
+megatron_parallelism:
+  enabled: true
+  activation_checkpointing: true
+  tensor_model_parallel_size: 2
+  expert_tensor_parallel_size: 1
+  expert_model_parallel_size: 8
+  pipeline_model_parallel_size: 2
+  context_parallel_size: 4
+  sequence_parallel: true
+  freeze_moe_router: true
+  moe_router_dtype: "fp32"
+  moe_router_load_balancing_type: "none" # CRITICAL: Prevents advantage logprob divergence in GRPO/RL
+  apply_rope_fusion: true
+  defer_fp32_logits: true
+
+training:
+  global_batch_size: 2048
+  micro_batch_size: 1
+  learning_rate: 3e-6
+  lr_scheduler_type: "constant"
+  epochs: 3
+  weight_decay: 0.01
+  warmup_ratio: 0.03
+  logging_steps: 1
+  save_steps: 50
+  output_dir: "outputs/nemotron_lora_adapter"
