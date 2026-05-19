@@ -43,11 +43,14 @@ def main():
     )
 
     # 4. Load Model with Quantization
-    print("📥 Loading model sharded across GPUs in 4-bit...")
+    print("📥 Loading model sharded across GPUs in 4-bit with custom max_memory rules...")
+    # Limit weight loading on GPU 0 to leave plenty of headroom for activations and gradients
+    max_memory = {0: "9GiB", 1: "14GiB"}
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         quantization_config=bnb_config,
         device_map="auto",  # Auto shards model weights across T4 GPU #1 and T4 GPU #2
+        max_memory=max_memory,
         trust_remote_code=True
     )
 
