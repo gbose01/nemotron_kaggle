@@ -49,7 +49,7 @@ def main():
     print("⚙️ Triggering dynamic module registration via get_class_from_dynamic_module...")
     try:
         # This loads and registers the custom model class in sys.modules without allocating weight memory!
-        _ = get_class_from_dynamic_module("NemotronHForCausalLM", model_name)
+        _ = get_class_from_dynamic_module("modeling_nemotron_h.NemotronHForCausalLM", model_name)
         
         # Scan sys.modules and inject _no_split_modules directly into the live registered class
         import sys
