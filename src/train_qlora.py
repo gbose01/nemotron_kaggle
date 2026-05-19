@@ -42,7 +42,22 @@ def main():
         bnb_4bit_compute_dtype=torch.bfloat16
     )
 
-    # 4. Load Model with Quantization
+    # 4. Dynamic Class Patching for Custom Model Sharding
+    # Custom architectures require explicit block definitions to let accelerate shard them layer-by-layer.
+    model_path = os.path.abspath(model_name)
+    if os.path.isdir(model_path):
+        import sys
+        if model_path not in sys.path:
+            sys.path.append(model_path)
+        try:
+            from modeling_nemotron_h import NemotronHModel
+            # Prevent splitting inside individual decoder blocks, allowing sharding between blocks
+            NemotronHModel._no_split_modules = ["NemotronHBlock"]
+            print("⚙️ Dynamic Patch Applied: Set NemotronHModel._no_split_modules = ['NemotronHBlock']")
+        except ImportError:
+            print("⚠️ Could not import modeling_nemotron_h directly to patch _no_split_modules. Relying on default.")
+
+    # 5. Load Model with Quantization
     print("📥 Loading model sharded across GPUs in 4-bit with custom max_memory rules...")
     # Limit weight loading on GPU 0 to leave plenty of headroom for activations and gradients
     max_memory = {0: "9GiB", 1: "14GiB"}
