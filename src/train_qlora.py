@@ -28,7 +28,7 @@ def main():
     print(f"📂 Outputs will be saved to: {output_dir}")
 
     # 2. Load Tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -47,7 +47,8 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         quantization_config=bnb_config,
-        device_map="auto"  # Auto shards model weights across T4 GPU #1 and T4 GPU #2
+        device_map="auto",  # Auto shards model weights across T4 GPU #1 and T4 GPU #2
+        trust_remote_code=True
     )
 
     # 5. Prepare model for k-bit (4-bit) gradient checkpoint training
