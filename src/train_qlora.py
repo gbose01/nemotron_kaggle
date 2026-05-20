@@ -49,27 +49,37 @@ def main():
     print("⚙️ Triggering dynamic module registration via get_class_from_dynamic_module...")
     try:
         # This loads and registers the custom model class in sys.modules without allocating weight memory!
-        _ = get_class_from_dynamic_module("modeling_nemotron_h.NemotronHForCausalLM", model_name)
+        model_cls = get_class_from_dynamic_module("modeling_nemotron_h.NemotronHForCausalLM", model_name)
+        if model_cls is not None:
+            model_cls._no_split_modules = ["NemotronHBlock"]
+            print(f"⚙️ Direct Patch Applied: Set NemotronHForCausalLM._no_split_modules = ['NemotronHBlock']")
         
-        # Scan sys.modules and inject _no_split_modules directly into the live registered classes
+        # Also try to get NemotronHModel if possible to patch it directly
+        try:
+            base_model_cls = get_class_from_dynamic_module("modeling_nemotron_h.NemotronHModel", model_name)
+            if base_model_cls is not None:
+                base_model_cls._no_split_modules = ["NemotronHBlock"]
+                print(f"⚙️ Direct Patch Applied: Set NemotronHModel._no_split_modules = ['NemotronHBlock']")
+        except Exception as e:
+            print(f"ℹ️ Could not directly retrieve NemotronHModel: {e}")
+
+        # Scan sys.modules and inject _no_split_modules directly into the live registered classes as fallback/double-safety
         import sys
-        patched = False
+        patched_count = 0
         for mod_name, module in list(sys.modules.items()):
             if mod_name.endswith("modeling_nemotron_h") and module is not None:
-                has_patched_any = False
                 if hasattr(module, "NemotronHModel"):
                     getattr(module, "NemotronHModel")._no_split_modules = ["NemotronHBlock"]
                     print(f"⚙️ Dynamic Patch Applied: Set {mod_name}.NemotronHModel._no_split_modules = ['NemotronHBlock']")
-                    has_patched_any = True
+                    patched_count += 1
                 if hasattr(module, "NemotronHForCausalLM"):
                     getattr(module, "NemotronHForCausalLM")._no_split_modules = ["NemotronHBlock"]
                     print(f"⚙️ Dynamic Patch Applied: Set {mod_name}.NemotronHForCausalLM._no_split_modules = ['NemotronHBlock']")
-                    has_patched_any = True
-                if has_patched_any:
-                    patched = True
-                    break
-        if not patched:
+                    patched_count += 1
+        if patched_count == 0:
             print("⚠️ Could not locate NemotronHModel/NemotronHForCausalLM in sys.modules to apply the sharding patch.")
+        else:
+            print(f"⚙️ Applied {patched_count} patches in sys.modules")
     except Exception as e:
         print(f"⚠️ Could not execute dynamic class patching: {e}")
 
@@ -82,6 +92,8 @@ def main():
         quantization_config=bnb_config,
         device_map="auto",  # Auto shards model weights across T4 GPU #1 and T4 GPU #2
         max_memory=max_memory,
+        torch_dtype=torch.bfloat16,
+        low_cpu_mem_usage=True,
         trust_remote_code=True
     )
 
