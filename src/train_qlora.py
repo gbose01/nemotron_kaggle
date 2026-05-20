@@ -51,19 +51,25 @@ def main():
         # This loads and registers the custom model class in sys.modules without allocating weight memory!
         _ = get_class_from_dynamic_module("modeling_nemotron_h.NemotronHForCausalLM", model_name)
         
-        # Scan sys.modules and inject _no_split_modules directly into the live registered class
+        # Scan sys.modules and inject _no_split_modules directly into the live registered classes
         import sys
         patched = False
         for mod_name, module in list(sys.modules.items()):
             if mod_name.endswith("modeling_nemotron_h") and module is not None:
+                has_patched_any = False
                 if hasattr(module, "NemotronHModel"):
-                    model_cls = getattr(module, "NemotronHModel")
-                    model_cls._no_split_modules = ["NemotronHBlock"]
+                    getattr(module, "NemotronHModel")._no_split_modules = ["NemotronHBlock"]
                     print(f"⚙️ Dynamic Patch Applied: Set {mod_name}.NemotronHModel._no_split_modules = ['NemotronHBlock']")
+                    has_patched_any = True
+                if hasattr(module, "NemotronHForCausalLM"):
+                    getattr(module, "NemotronHForCausalLM")._no_split_modules = ["NemotronHBlock"]
+                    print(f"⚙️ Dynamic Patch Applied: Set {mod_name}.NemotronHForCausalLM._no_split_modules = ['NemotronHBlock']")
+                    has_patched_any = True
+                if has_patched_any:
                     patched = True
                     break
         if not patched:
-            print("⚠️ Could not locate NemotronHModel in sys.modules to apply the sharding patch.")
+            print("⚠️ Could not locate NemotronHModel/NemotronHForCausalLM in sys.modules to apply the sharding patch.")
     except Exception as e:
         print(f"⚠️ Could not execute dynamic class patching: {e}")
 
