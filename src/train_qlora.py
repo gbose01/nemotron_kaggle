@@ -51,14 +51,20 @@ def main():
     if os.path.isdir(model_path):
         print("⚙️ Copying custom modeling files to bypass HuggingFace sandboxing...")
         try:
-            # Ensure the 'src' folder is explicitly in Python's search path
+            # Ensure 'src' and root folders are explicitly in Python's search path
             src_dir = os.path.abspath("src")
+            os.makedirs(src_dir, exist_ok=True)
+            
             if src_dir not in sys.path:
                 sys.path.append(src_dir)
+            if os.getcwd() not in sys.path:
+                sys.path.append(os.getcwd())
                 
-            # Copy files into the 'src' folder so they can be imported as standard local modules
+            # Copy files to BOTH root and src/ directories for maximum import compatibility
             shutil.copy(os.path.join(model_path, "modeling_nemotron_h.py"), os.path.join(src_dir, "modeling_nemotron_h.py"))
             shutil.copy(os.path.join(model_path, "configuration_nemotron_h.py"), os.path.join(src_dir, "configuration_nemotron_h.py"))
+            shutil.copy(os.path.join(model_path, "modeling_nemotron_h.py"), "modeling_nemotron_h.py")
+            shutil.copy(os.path.join(model_path, "configuration_nemotron_h.py"), "configuration_nemotron_h.py")
             
             # Import local classes directly
             from configuration_nemotron_h import NemotronHConfig
@@ -80,7 +86,7 @@ def main():
         except Exception as e:
             print(f"⚠️ Could not execute local model registration: {e}")
 
-    # 5. Load Model with Quantization (Loads natively without trust_remote_code!)
+    # 5. Load Model with Quantization (Loads natively or falls back to sandboxed OOM-free configurations!)
     print("📥 Loading model sharded across GPUs in 4-bit with custom max_memory rules...")
     # Limit weight loading on GPU 0 to leave plenty of headroom for activations and gradients
     max_memory = {0: "9GiB", 1: "14GiB"}
@@ -90,7 +96,8 @@ def main():
         device_map="auto",  # Auto shards model weights across T4 GPU #1 and T4 GPU #2
         max_memory=max_memory,
         torch_dtype=torch.bfloat16,
-        low_cpu_mem_usage=True
+        low_cpu_mem_usage=True,
+        trust_remote_code=True
     )
 
     # 5. Prepare model for k-bit (4-bit) gradient checkpoint training
