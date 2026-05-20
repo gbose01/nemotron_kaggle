@@ -42,48 +42,39 @@ def main():
         bnb_4bit_compute_dtype=torch.bfloat16
     )
 
-    # 4. Dynamic Class Patching for Custom Model Sharding
-    # Custom architectures require explicit block definitions to let accelerate shard them layer-by-layer.
-    # We trigger dynamic module registration in sys.modules using HF's dynamic module helper.
-    from transformers.dynamic_module_utils import get_class_from_dynamic_module
-    print("⚙️ Triggering dynamic module registration via get_class_from_dynamic_module...")
-    try:
-        # This loads and registers the custom model class in sys.modules without allocating weight memory!
-        model_cls = get_class_from_dynamic_module("modeling_nemotron_h.NemotronHForCausalLM", model_name)
-        if model_cls is not None:
-            model_cls._no_split_modules = ["NemotronHBlock"]
-            print(f"⚙️ Direct Patch Applied: Set NemotronHForCausalLM._no_split_modules = ['NemotronHBlock']")
-        
-        # Also try to get NemotronHModel if possible to patch it directly
+    # 4. Custom Model Local Registration (Bypasses HF Sandbox Isolation completely!)
+    import shutil
+    import json
+    
+    model_path = os.path.abspath(model_name)
+    if os.path.isdir(model_path):
+        print("⚙️ Copying custom modeling files to bypass HuggingFace sandboxing...")
         try:
-            base_model_cls = get_class_from_dynamic_module("modeling_nemotron_h.NemotronHModel", model_name)
-            if base_model_cls is not None:
-                base_model_cls._no_split_modules = ["NemotronHBlock"]
-                print(f"⚙️ Direct Patch Applied: Set NemotronHModel._no_split_modules = ['NemotronHBlock']")
+            # Copy files locally so they can be imported as standard local modules
+            shutil.copy(os.path.join(model_path, "modeling_nemotron_h.py"), "modeling_nemotron_h.py")
+            shutil.copy(os.path.join(model_path, "configuration_nemotron_h.py"), "configuration_nemotron_h.py")
+            
+            # Import local classes directly
+            from configuration_nemotron_h import NemotronHConfig
+            from modeling_nemotron_h import NemotronHModel, NemotronHForCausalLM
+            
+            # Statically patch sharding layout rules on both local classes
+            NemotronHModel._no_split_modules = ["NemotronHBlock"]
+            NemotronHForCausalLM._no_split_modules = ["NemotronHBlock"]
+            print("⚙️ Statically Patched Local Classes: _no_split_modules = ['NemotronHBlock']")
+            
+            # Extract custom model type from config
+            with open(os.path.join(model_path, "config.json"), "r") as f:
+                model_type = json.load(f).get("model_type", "nemotron_h")
+                
+            # Register custom config and model in HuggingFace Auto classes
+            AutoConfig.register(model_type, NemotronHConfig)
+            AutoModelForCausalLM.register(NemotronHConfig, NemotronHForCausalLM)
+            print(f"⚙️ Registered custom model type '{model_type}' in HuggingFace registries!")
         except Exception as e:
-            print(f"ℹ️ Could not directly retrieve NemotronHModel: {e}")
+            print(f"⚠️ Could not execute local model registration: {e}")
 
-        # Scan sys.modules and inject _no_split_modules directly into the live registered classes as fallback/double-safety
-        import sys
-        patched_count = 0
-        for mod_name, module in list(sys.modules.items()):
-            if mod_name.endswith("modeling_nemotron_h") and module is not None:
-                if hasattr(module, "NemotronHModel"):
-                    getattr(module, "NemotronHModel")._no_split_modules = ["NemotronHBlock"]
-                    print(f"⚙️ Dynamic Patch Applied: Set {mod_name}.NemotronHModel._no_split_modules = ['NemotronHBlock']")
-                    patched_count += 1
-                if hasattr(module, "NemotronHForCausalLM"):
-                    getattr(module, "NemotronHForCausalLM")._no_split_modules = ["NemotronHBlock"]
-                    print(f"⚙️ Dynamic Patch Applied: Set {mod_name}.NemotronHForCausalLM._no_split_modules = ['NemotronHBlock']")
-                    patched_count += 1
-        if patched_count == 0:
-            print("⚠️ Could not locate NemotronHModel/NemotronHForCausalLM in sys.modules to apply the sharding patch.")
-        else:
-            print(f"⚙️ Applied {patched_count} patches in sys.modules")
-    except Exception as e:
-        print(f"⚠️ Could not execute dynamic class patching: {e}")
-
-    # 5. Load Model with Quantization
+    # 5. Load Model with Quantization (Loads natively without trust_remote_code!)
     print("📥 Loading model sharded across GPUs in 4-bit with custom max_memory rules...")
     # Limit weight loading on GPU 0 to leave plenty of headroom for activations and gradients
     max_memory = {0: "9GiB", 1: "14GiB"}
@@ -93,8 +84,7 @@ def main():
         device_map="auto",  # Auto shards model weights across T4 GPU #1 and T4 GPU #2
         max_memory=max_memory,
         torch_dtype=torch.bfloat16,
-        low_cpu_mem_usage=True,
-        trust_remote_code=True
+        low_cpu_mem_usage=True
     )
 
     # 5. Prepare model for k-bit (4-bit) gradient checkpoint training
