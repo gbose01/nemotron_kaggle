@@ -45,14 +45,20 @@ def main():
     # 4. Custom Model Local Registration (Bypasses HF Sandbox Isolation completely!)
     import shutil
     import json
+    import sys
     
     model_path = os.path.abspath(model_name)
     if os.path.isdir(model_path):
         print("⚙️ Copying custom modeling files to bypass HuggingFace sandboxing...")
         try:
-            # Copy files locally so they can be imported as standard local modules
-            shutil.copy(os.path.join(model_path, "modeling_nemotron_h.py"), "modeling_nemotron_h.py")
-            shutil.copy(os.path.join(model_path, "configuration_nemotron_h.py"), "configuration_nemotron_h.py")
+            # Ensure the 'src' folder is explicitly in Python's search path
+            src_dir = os.path.abspath("src")
+            if src_dir not in sys.path:
+                sys.path.append(src_dir)
+                
+            # Copy files into the 'src' folder so they can be imported as standard local modules
+            shutil.copy(os.path.join(model_path, "modeling_nemotron_h.py"), os.path.join(src_dir, "modeling_nemotron_h.py"))
+            shutil.copy(os.path.join(model_path, "configuration_nemotron_h.py"), os.path.join(src_dir, "configuration_nemotron_h.py"))
             
             # Import local classes directly
             from configuration_nemotron_h import NemotronHConfig
