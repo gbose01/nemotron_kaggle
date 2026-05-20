@@ -8,7 +8,7 @@ from peft import LoraConfig, TaskType, prepare_model_for_kbit_training
 from trl import SFTTrainer, SFTConfig
 
 def main():
-    parser = argparse.ArgumentParser(description="QLoRA 4-bit SFT for GCP Single GPU (L4/A100)")
+    parser = argparse.ArgumentParser(description="QLoRA 4-bit SFT for Kaggle Dual T4 x2 GPUs")
     parser.add_argument("--config", type=str, default="src/train_config.yaml", help="Path to config YAML")
     parser.add_argument("--model_name", type=str, default=None, help="Override base model name")
     parser.add_argument("--output_dir", type=str, default=None, help="Override output directory")
@@ -24,7 +24,7 @@ def main():
     model_name = args.model_name or config['model']['base_model_name']
     output_dir = args.output_dir or config['training']['output_dir']
     
-    print(f"🚀 Starting GCP QLoRA 4-bit SFT on model: {model_name}")
+    print(f"🚀 Starting SFT QLoRA 4-bit Fine-Tuning on model: {model_name}")
     print(f"📂 Outputs will be saved to: {output_dir}")
 
     # 2. Load Tokenizer
@@ -33,31 +33,60 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # 3. Configure 4-bit Quantization (QLoRA) with Native BF16
-    print("⚙️ Configuring 4-bit BitsAndBytes Quantization (NF4 + BF16 compute)...")
+    # 3. Configure 4-bit Quantization (QLoRA) - FP16 for T4 GPUs
+    print("⚙️ Configuring 4-bit BitsAndBytes Quantization (NF4 + FP16 compute)...")
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
         bnb_4bit_use_double_quant=True,
-        bnb_4bit_compute_dtype=torch.bfloat16  # Supported natively on L4/A100!
+        bnb_4bit_compute_dtype=torch.float16  # Native FP16 for T4 (no native BF16!)
     )
 
-    # 4. Load Model (Simplified for Single GPU)
-    print("📥 Loading model on GPU in 4-bit (BF16 storage)...")
+    # 4. Dynamic Class Patching for Multi-GPU Sharding (CRITICAL for Kaggle 2x T4!)
+    # Custom architectures require explicit block definitions so accelerate can shard them layer-by-layer.
+    # We scan sys.modules at runtime so it patches whatever transformers package is loaded (global or utility script).
+    from transformers.dynamic_module_utils import get_class_from_dynamic_module
+    print("⚙️ Triggering dynamic module registration for sharding rules...")
+    try:
+        # Load the class once into sys.modules memory
+        _ = get_class_from_dynamic_module("modeling_nemotron_h.NemotronHForCausalLM", model_name)
+        
+        # Scan and inject _no_split_modules directly into the live registered classes
+        import sys
+        patched_count = 0
+        for mod_name, module in list(sys.modules.items()):
+            if mod_name.endswith("modeling_nemotron_h") and module is not None:
+                if hasattr(module, "NemotronHModel"):
+                    getattr(module, "NemotronHModel")._no_split_modules = ["NemotronHBlock"]
+                    print(f"⚙️ Dynamic Patch: Set {mod_name}.NemotronHModel._no_split_modules = ['NemotronHBlock']")
+                    patched_count += 1
+                if hasattr(module, "NemotronHForCausalLM"):
+                    getattr(module, "NemotronHForCausalLM")._no_split_modules = ["NemotronHBlock"]
+                    print(f"⚙️ Dynamic Patch: Set {mod_name}.NemotronHForCausalLM._no_split_modules = ['NemotronHBlock']")
+                    patched_count += 1
+        print(f"⚙️ Applied {patched_count} sharding patches in sys.modules.")
+    except Exception as e:
+        print(f"⚠️ Skip dynamic sharding patch (single-GPU/CPU run): {e}")
+
+    # 5. Load Model with Quantization & Custom Max Memory Budget
+    print("📥 Loading model sharded across T4 GPUs in 4-bit (FP16 storage)...")
+    # Limit weight loading on GPU 0 to leave plenty of headroom for activations/gradients
+    max_memory = {0: "6GiB", 1: "13GiB"}
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         quantization_config=bnb_config,
-        device_map="auto",          # Maps to single GPU automatically
-        torch_dtype=torch.bfloat16, # Native BF16 for stability
+        device_map="auto",          # Auto shards model weights across GPU #0 and GPU #1
+        max_memory=max_memory,
+        torch_dtype=torch.float16,  # FP16 storage for stability on T4
         low_cpu_mem_usage=True,
         trust_remote_code=True
     )
 
-    # 5. Prepare model for k-bit (4-bit) gradient checkpoint training
+    # 6. Prepare model for k-bit (4-bit) gradient checkpoint training
     print("🔧 Preparing model for 4-bit training...")
     model = prepare_model_for_kbit_training(model)
 
-    # 6. Setup LoRA Config
+    # 7. Setup LoRA Config
     print("🔧 Wrapping model with PEFT/LoRA Adapter...")
     lora_cfg = config['lora']
     peft_config = LoraConfig(
@@ -69,7 +98,7 @@ def main():
         target_modules=lora_cfg['target_modules']
     )
 
-    # 7. Load Dataset
+    # 8. Load Dataset
     print("📊 Loading SFT training dataset...")
     dataset = load_dataset("json", data_files="data/sft_reasoning_dataset.jsonl")
 
@@ -77,12 +106,12 @@ def main():
     def formatting_prompts_func(example):
         return f"{example['prompt']}\n\n{example['completion']}"
 
-    # 8. Setup SFT Config (Optimized for GCP GPU VRAM)
+    # 9. Setup SFT Config (Optimized for T4 VRAM and gradient accumulation)
     t_cfg = config['training']
     training_args = SFTConfig(
         output_dir=output_dir,
-        per_device_train_batch_size=1,            # Micro-batch 1
-        gradient_accumulation_steps=16,          # Accumulate to simulate larger batch
+        per_device_train_batch_size=1,            # Micro-batch 1 fits T4 GPU
+        gradient_accumulation_steps=16,          # Simulates larger batch size
         learning_rate=float(t_cfg['learning_rate']),
         lr_scheduler_type=t_cfg['lr_scheduler_type'],
         num_train_epochs=t_cfg['epochs'],
@@ -90,7 +119,7 @@ def main():
         warmup_ratio=t_cfg['warmup_ratio'],
         logging_steps=t_cfg['logging_steps'],
         save_steps=t_cfg['save_steps'],
-        bf16=True,                               # Native BF16 compute!
+        fp16=True,                               # Native FP16 compute for T4
         gradient_checkpointing=True,             # Save VRAM
         logging_dir=os.path.join(output_dir, "logs"),
         report_to="none",
@@ -99,7 +128,7 @@ def main():
         completion_only_loss=False
     )
 
-    # 9. Initialize SFTTrainer
+    # 10. Initialize SFTTrainer
     print("🚂 Initializing Trainer...")
     trainer = SFTTrainer(
         model=model,
@@ -110,11 +139,11 @@ def main():
         args=training_args
     )
 
-    # 10. Start Training
-    print("🔥 Starting 4-bit QLoRA training loop on GCP GPU...")
+    # 11. Start Training
+    print("🔥 Starting 4-bit QLoRA SFT training loop on Kaggle T4 GPUs...")
     trainer.train()
 
-    # 11. Export Checkpoint & Adapter Config
+    # 12. Export Checkpoint & Adapter Config
     print("📝 Exporting final fine-tuned LoRA adapter...")
     trainer.model.save_pretrained(output_dir)
     tokenizer.save_pretrained(output_dir)
