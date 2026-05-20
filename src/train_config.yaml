@@ -1,7 +1,7 @@
 # 🏆 Optimal Sparse MoE Megatron-Parallelism & SFT Configuration
 
 model:
-  base_model_name: "NVIDIA/Nemotron-3-Nano-30B-Base"
+  base_model_name: "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-Base-BF16"
   precision: "bfloat16"
   max_seq_length: 8192
   max_gen_tokens: 7680
