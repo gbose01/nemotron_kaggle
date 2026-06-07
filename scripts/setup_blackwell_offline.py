@@ -61,6 +61,8 @@ def apply_triton_fix() -> None:
 
 
 def install_offline(wheels_dir: Path) -> None:
+    # torch only — torchvision/torchaudio not needed for Nemotron SFT and their
+    # nightly wheels pin exact torch dev versions that conflict across download days.
     run(
         [
             sys.executable,
@@ -70,8 +72,6 @@ def install_offline(wheels_dir: Path) -> None:
             "--no-index",
             f"--find-links={wheels_dir}",
             "torch",
-            "torchvision",
-            "torchaudio",
         ]
     )
 

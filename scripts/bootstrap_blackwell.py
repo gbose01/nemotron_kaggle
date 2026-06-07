@@ -89,6 +89,12 @@ def configure_hf_cache(cache_root: Path) -> None:
 
 
 def download_torch_wheels(wheels_dir: Path) -> None:
+    """Download PyTorch cu128 nightly wheel(s) for Blackwell offline install.
+
+    Only ``torch`` is required for Nemotron SFT.  Downloading torchvision /
+    torchaudio together triggers pip resolver conflicts because nightly builds
+    pin exact cross-package dev versions that drift day-to-day.
+    """
     wheels_dir.mkdir(parents=True, exist_ok=True)
     run(
         [
@@ -97,8 +103,6 @@ def download_torch_wheels(wheels_dir: Path) -> None:
             "pip",
             "download",
             "torch",
-            "torchvision",
-            "torchaudio",
             "--dest",
             str(wheels_dir),
             "--index-url",
