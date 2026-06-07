@@ -17,7 +17,18 @@ def main():
     # Locate key files
     config_name = "adapter_config.json"
     weights_names = ["adapter_model.safetensors", "adapter_model.bin"]
-    
+
+    # Tokenizer / chat-template artifacts bundled if present so the scoring
+    # engine reproduces the exact training-time chat format.
+    optional_names = [
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "tokenizer.model",
+        "special_tokens_map.json",
+        "chat_template.jinja",
+        "added_tokens.json",
+    ]
+
     config_path = os.path.join(args.source, config_name)
     weights_path = None
     weights_name_used = None
@@ -40,11 +51,18 @@ def main():
     # Open zip file
     print(f"⏳ Archiving files to '{args.output}'...")
     try:
+        bundled = [config_name, weights_name_used]
         with zipfile.ZipFile(args.output, "w", zipfile.ZIP_DEFLATED) as zipf:
             # Write files directly at the root (arcname forces root placement, omitting directory prefixes)
             zipf.write(config_path, arcname=config_name)
             zipf.write(weights_path, arcname=weights_name_used)
-            
+
+            for oname in optional_names:
+                opath = os.path.join(args.source, oname)
+                if os.path.exists(opath):
+                    zipf.write(opath, arcname=oname)
+                    bundled.append(oname)
+
         # Get size in MB
         size_mb = os.path.getsize(args.output) / (1024 * 1024)
         
@@ -54,8 +72,8 @@ def main():
         print(f"Output File:    {args.output}")
         print(f"Package Size:   {size_mb:.2f} MB")
         print("Files Bundled (Root Level):")
-        print(f"  - {config_name}")
-        print(f"  - {weights_name_used}")
+        for fname in bundled:
+            print(f"  - {fname}")
         print("="*60)
         
     except Exception as e:

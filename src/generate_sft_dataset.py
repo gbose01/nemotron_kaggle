@@ -22,7 +22,7 @@ class SftDatasetGenerator:
             f"   - {num} in Roman numerals is {roman}.\n"
             f"5. Therefore, the final converted value is wrapped in a box.\n"
             f"</think>\n"
-            f"\\\\boxed{{{roman}}}"
+            f"\\boxed{{{roman}}}"
         )
 
     def generate_gravity_cot(self, prompt, target_d, query_t):
@@ -50,7 +50,7 @@ class SftDatasetGenerator:
             f"   - d = {target_d} m.\n"
             f"5. The final calculated distance is wrapped inside a LaTeX box.\n"
             f"</think>\n"
-            f"\\\\boxed{{{target_d}}}"
+            f"\\boxed{{{target_d}}}"
         )
 
     def generate_linear_cot(self, prompt, target_y, query_x):
@@ -69,7 +69,7 @@ class SftDatasetGenerator:
             f"   - Transformed output is {target_y}.\n"
             f"5. The final converted value is wrapped in a box.\n"
             f"</think>\n"
-            f"\\\\boxed{{{target_y}}}"
+            f"\\boxed{{{target_y}}}"
         )
 
     def generate_cipher_cot(self, prompt, plain, query_cipher):
@@ -81,7 +81,7 @@ class SftDatasetGenerator:
             f"   - Result maps perfectly to: '{plain}'.\n"
             f"4. Wrapping the final decrypted text in a box.\n"
             f"</think>\n"
-            f"\\\\boxed{{{plain}}}"
+            f"\\boxed{{{plain}}}"
         )
 
     def generate_bit_cot(self, prompt, ans, query_bit):
@@ -93,7 +93,7 @@ class SftDatasetGenerator:
             f"   - Transformed 8-bit output is '{ans}'.\n"
             f"4. Wrapping the final binary output in a box.\n"
             f"</think>\n"
-            f"\\\\boxed{{{ans}}}"
+            f"\\boxed{{{ans}}}"
         )
 
     def generate_equation_cot(self, prompt, ans, query):
@@ -105,7 +105,7 @@ class SftDatasetGenerator:
             f"   - Resulting output string is '{ans}'.\n"
             f"4. Wrapping the final equation output in a box.\n"
             f"</think>\n"
-            f"\\\\boxed{{{ans}}}"
+            f"\\boxed{{{ans}}}"
         )
 
     def build_dataset(self, num_rows=100):

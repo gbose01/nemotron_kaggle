@@ -46,3 +46,25 @@ training:
   logging_steps: 1
   save_steps: 50
   output_dir: "outputs/nemotron_lora_adapter"
+
+# ---------------------------------------------------------------------------
+# SFT block consumed by src/train_blackwell.py (full BF16 LoRA on Blackwell).
+# These are deliberately separate from the GRPO/Megatron `training` block above,
+# which is kept only as a reference recipe and is NOT used by the SFT run.
+# Recipe mirrors the proven reference notebook (loss 11.2 -> ~2.8 in ~1h).
+# ---------------------------------------------------------------------------
+sft:
+  lora_rank: 32            # competition hard cap is 32
+  lora_alpha: 32           # alpha = r (notebook), not 2*r
+  lora_dropout: 0.0        # NEFTune replaces dropout
+  neftune_noise_alpha: 5
+  max_seq_length: 1536     # raised from notebook's 1024 to fit full CoT
+  epochs: 1
+  batch_size: 1
+  grad_accum: 4
+  learning_rate: 2e-4
+  lr_scheduler_type: "cosine"
+  warmup_ratio: 0.1
+  weight_decay: 0.01
+  gradient_checkpointing: true
+  logging_steps: 10

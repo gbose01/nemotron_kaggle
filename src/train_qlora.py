@@ -33,6 +33,11 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    # 🚀 RAM Safety: Clear memory before heavy model loading
+    import gc
+    gc.collect()
+    torch.cuda.empty_cache()
+
     # 3. Configure 4-bit Quantization (QLoRA) - FP16 for T4 GPUs
     print("⚙️ Configuring 4-bit BitsAndBytes Quantization (NF4 + FP16 compute)...")
     bnb_config = BitsAndBytesConfig(
@@ -71,7 +76,8 @@ def main():
     # 5. Load Model with Quantization & Custom Max Memory Budget
     print("📥 Loading model sharded across T4 GPUs in 4-bit (FP16 storage)...")
     # Limit weight loading on GPU 0 to leave plenty of headroom for activations/gradients
-    max_memory = {0: "6GiB", 1: "13GiB"}
+    # We use a slightly more conservative GPU 0 limit to prevent OOM on the primary device
+    max_memory = {0: "5GiB", 1: "13GiB"}
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         quantization_config=bnb_config,
@@ -81,6 +87,10 @@ def main():
         low_cpu_mem_usage=True,
         trust_remote_code=True
     )
+    
+    # 🚀 RAM Safety: Clear memory after loading weights
+    gc.collect()
+    torch.cuda.empty_cache()
 
     # 6. Prepare model for k-bit (4-bit) gradient checkpoint training
     print("🔧 Preparing model for 4-bit training...")

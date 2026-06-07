@@ -75,7 +75,7 @@ class PromptEngine:
                 # We strip out the final instruction from exemplars to keep them clean
                 clean_ex_prompt = re.sub(r'Now, (?:determine|convert|write|decrypt).*', '', ex['prompt'], flags=re.DOTALL).strip()
                 few_shot_text += f"Puzzle:\n{clean_ex_prompt}\n\n"
-                few_shot_text += f"Step-by-Step Solution:\n<think>\n[Deducing rule: ...]\n</think>\n\\\\boxed{{{ex['answer']}}}\n\n"
+                few_shot_text += f"Step-by-Step Solution:\n<think>\n[Deducing rule: ...]\n</think>\n\\boxed{{{ex['answer']}}}\n\n"
             few_shot_text += "============================================================\n\n"
             
         # Formulate final prompt
@@ -84,7 +84,7 @@ class PromptEngine:
             f"{few_shot_text}"
             "### YOUR PUZZLE TO SOLVE:\n\n"
             f"{query_prompt}\n\n"
-            "Let's think step-by-step and write down the final answer inside \\\\boxed{}."
+            "Let's think step-by-step and write down the final answer inside \\boxed{}."
         )
         
         return final_prompt

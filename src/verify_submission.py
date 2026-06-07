@@ -1,6 +1,7 @@
 import os
 import zipfile
 import json
+import argparse
 
 class SubmissionVerifier:
     def __init__(self, zip_path="submission.zip"):
@@ -98,5 +99,8 @@ class SubmissionVerifier:
             return True
 
 if __name__ == "__main__":
-    verifier = SubmissionVerifier()
+    parser = argparse.ArgumentParser(description="Verify Kaggle submission.zip compliance")
+    parser.add_argument("--submission", default="submission.zip", help="Path to submission zip")
+    args = parser.parse_args()
+    verifier = SubmissionVerifier(zip_path=args.submission)
     verifier.verify()
