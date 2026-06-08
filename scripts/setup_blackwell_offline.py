@@ -26,25 +26,67 @@ def run(cmd: list[str], **kwargs) -> None:
     subprocess.run(cmd, check=True, **kwargs)
 
 
-def find_bundle_root(explicit: str | None) -> Path:
+def find_bundle_parts(explicit: str | None) -> tuple[Path, Path, Path]:
+    """Locate wheels/, nemotron-base/, and nemotron_kaggle/ under /kaggle/input.
+
+    Supports a single combined dataset OR two split datasets (deps + model),
+    which is required because /kaggle/working is only ~20 GB and cannot hold
+    the full ~65 GB bundle.
+    """
+    wheels_dir = model_dir = code_dir = None
+
+    def scan(base: Path) -> None:
+        nonlocal wheels_dir, model_dir, code_dir
+        if not base.exists():
+            return
+        if wheels_dir is None and (base / "wheels").is_dir():
+            wheels_dir = base / "wheels"
+        if code_dir is None and (base / "nemotron_kaggle").is_dir():
+            code_dir = base / "nemotron_kaggle"
+        if model_dir is None and (base / "nemotron-base").is_dir():
+            model_dir = base / "nemotron-base"
+        # Model-only dataset may expose shards at the dataset root.
+        if model_dir is None and (
+            (base / "model.safetensors.index.json").exists()
+            or any(base.glob("model-*.safetensors"))
+        ):
+            model_dir = base
+
     if explicit:
-        root = Path(explicit)
-        if (root / "wheels").exists() and (root / "nemotron-base").exists():
-            return root
-        raise FileNotFoundError(f"Bundle not found at {root}")
+        scan(Path(explicit))
+        nested = Path(explicit) / "nemotron-blackwell-offline"
+        if nested.exists():
+            scan(nested)
+    else:
+        for entry in sorted(Path("/kaggle/input").iterdir()):
+            for base in (
+                entry,
+                entry / "nemotron-blackwell-offline",
+                entry / "nemotron-blackwell-deps",
+                entry / "nemotron-blackwell-model",
+            ):
+                scan(base)
 
-    for entry in sorted(Path("/kaggle/input").iterdir()):
-        candidate = entry
-        if (candidate / "wheels").exists() and (candidate / "nemotron-base").exists():
-            return candidate
-        nested = candidate / "nemotron-blackwell-offline"
-        if nested.exists() and (nested / "wheels").exists():
-            return nested
+    missing = [
+        name for name, path in [
+            ("wheels", wheels_dir), ("nemotron-base", model_dir), ("nemotron_kaggle", code_dir)
+        ] if path is None
+    ]
+    if missing:
+        raise FileNotFoundError(
+            "Could not find bootstrap assets under /kaggle/input. Missing: "
+            + ", ".join(missing)
+            + ". Attach your offline dataset(s) or pass --bundle-root."
+        )
+    return wheels_dir, model_dir, code_dir
 
-    raise FileNotFoundError(
-        "Could not find bootstrap bundle under /kaggle/input. "
-        "Attach your offline dataset or pass --bundle-root."
-    )
+
+def find_bundle_root(explicit: str | None) -> Path:
+    """Legacy helper: return a virtual root when all parts live in one folder."""
+    wheels_dir, model_dir, code_dir = find_bundle_parts(explicit)
+    if wheels_dir.parent == model_dir.parent == code_dir.parent:
+        return wheels_dir.parent
+    return wheels_dir.parent  # split layout; callers should use find_bundle_parts
 
 
 def apply_triton_fix() -> None:
@@ -149,13 +191,12 @@ def main() -> None:
     parser.add_argument("--working-code", type=str, default="/kaggle/working/nemotron_kaggle")
     args = parser.parse_args()
 
-    bundle_root = find_bundle_root(args.bundle_root)
-    wheels_dir = bundle_root / "wheels"
-    model_dir = bundle_root / "nemotron-base"
-    code_dir = bundle_root / "nemotron_kaggle"
+    wheels_dir, model_dir, code_dir = find_bundle_parts(args.bundle_root)
     working_code = Path(args.working_code)
 
-    print(f"Using bundle: {bundle_root}")
+    print(f"Wheels: {wheels_dir}")
+    print(f"Model:  {model_dir}")
+    print(f"Code:   {code_dir}")
     apply_triton_fix()
     copy_code(code_dir, working_code)
     install_offline(wheels_dir)
@@ -164,7 +205,7 @@ def main() -> None:
     env_file.write_text(
         "\n".join(
             [
-                f'export NEMOTRON_BUNDLE_ROOT="{bundle_root}"',
+                f'export NEMOTRON_BUNDLE_ROOT="{model_dir.parent}"',
                 f'export NEMOTRON_MODEL_PATH="{model_dir}"',
                 f'export NEMOTRON_CODE_PATH="{working_code}"',
                 'export TRITON_PTXAS_PATH="/tmp/bin/ptxas"',
