@@ -26,12 +26,22 @@ def run(cmd: list[str], **kwargs) -> None:
     subprocess.run(cmd, check=True, **kwargs)
 
 
-def find_bundle_parts(explicit: str | None) -> tuple[Path, Path, Path]:
-    """Locate wheels/, nemotron-base/, and nemotron_kaggle/ under /kaggle/input.
+def find_competition_model() -> Path | None:
+    """Find the attached Kaggle competition / Models input (shortcut path)."""
+    for cfg in Path("/kaggle/input").rglob("config.json"):
+        parent = cfg.parent
+        if (parent / "model.safetensors.index.json").exists() or any(
+            parent.glob("model-*.safetensors")
+        ):
+            return parent
+    return None
 
-    Supports a single combined dataset OR two split datasets (deps + model),
-    which is required because /kaggle/working is only ~20 GB and cannot hold
-    the full ~65 GB bundle.
+
+def find_bundle_parts(explicit: str | None) -> tuple[Path, Path | None, Path]:
+    """Locate wheels/, nemotron_kaggle/, and optionally nemotron-base/.
+
+    For the competition-model shortcut, only wheels + code are required at setup
+    time; the model is resolved from /kaggle/input/models/... at train time.
     """
     wheels_dir = model_dir = code_dir = None
 
@@ -45,7 +55,6 @@ def find_bundle_parts(explicit: str | None) -> tuple[Path, Path, Path]:
             code_dir = base / "nemotron_kaggle"
         if model_dir is None and (base / "nemotron-base").is_dir():
             model_dir = base / "nemotron-base"
-        # Model-only dataset may expose shards at the dataset root.
         if model_dir is None and (
             (base / "model.safetensors.index.json").exists()
             or any(base.glob("model-*.safetensors"))
@@ -67,16 +76,18 @@ def find_bundle_parts(explicit: str | None) -> tuple[Path, Path, Path]:
             ):
                 scan(base)
 
+    if model_dir is None:
+        model_dir = find_competition_model()
+
     missing = [
-        name for name, path in [
-            ("wheels", wheels_dir), ("nemotron-base", model_dir), ("nemotron_kaggle", code_dir)
-        ] if path is None
+        name for name, path in [("wheels", wheels_dir), ("nemotron_kaggle", code_dir)]
+        if path is None
     ]
     if missing:
         raise FileNotFoundError(
             "Could not find bootstrap assets under /kaggle/input. Missing: "
             + ", ".join(missing)
-            + ". Attach your offline dataset(s) or pass --bundle-root."
+            + ". Attach nemotron-blackwell-deps or pass --bundle-root."
         )
     return wheels_dir, model_dir, code_dir
 
@@ -84,9 +95,9 @@ def find_bundle_parts(explicit: str | None) -> tuple[Path, Path, Path]:
 def find_bundle_root(explicit: str | None) -> Path:
     """Legacy helper: return a virtual root when all parts live in one folder."""
     wheels_dir, model_dir, code_dir = find_bundle_parts(explicit)
-    if wheels_dir.parent == model_dir.parent == code_dir.parent:
+    if model_dir and wheels_dir.parent == model_dir.parent == code_dir.parent:
         return wheels_dir.parent
-    return wheels_dir.parent  # split layout; callers should use find_bundle_parts
+    return wheels_dir.parent
 
 
 def apply_triton_fix() -> None:
@@ -202,11 +213,16 @@ def main() -> None:
     install_offline(wheels_dir)
 
     env_file = Path("/kaggle/working/blackwell_env.sh")
+    model_path_line = (
+        f'export NEMOTRON_MODEL_PATH="{model_dir}"'
+        if model_dir is not None
+        else "# NEMOTRON_MODEL_PATH set at train time via kagglehub"
+    )
     env_file.write_text(
         "\n".join(
             [
-                f'export NEMOTRON_BUNDLE_ROOT="{model_dir.parent}"',
-                f'export NEMOTRON_MODEL_PATH="{model_dir}"',
+                f'export NEMOTRON_WHEELS_PATH="{wheels_dir}"',
+                model_path_line,
                 f'export NEMOTRON_CODE_PATH="{working_code}"',
                 'export TRITON_PTXAS_PATH="/tmp/bin/ptxas"',
             ]
@@ -216,7 +232,7 @@ def main() -> None:
 
     print("\nOffline setup complete.")
     print("IMPORTANT: Restart kernel now (Run -> Restart Kernel).")
-    print(f"Model path: {model_dir}")
+    print(f"Model path: {model_dir or '(competition model — resolve at train time)'}")
     print(f"Code path:  {working_code}")
     print(f"Saved env:  {env_file}")
 

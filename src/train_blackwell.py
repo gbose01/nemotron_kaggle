@@ -38,22 +38,29 @@ from trl import SFTConfig, SFTTrainer  # noqa: E402
 
 
 def autodetect_model_path() -> str | None:
-    """Find a local Nemotron model dir from common offline / kagglehub paths."""
-    candidates = []
-    kaggle_input = Path("/kaggle/input")
-    if kaggle_input.exists():
-        for entry in sorted(kaggle_input.iterdir()):
-            candidates += [entry / "nemotron-base",
-                           entry / "nemotron-blackwell-offline" / "nemotron-base"]
-    # kagglehub default cache
-    cache = Path.home() / ".cache" / "kagglehub"
-    if cache.exists():
-        candidates += list(cache.rglob("config.json"))
-    for c in candidates:
-        if c.name == "config.json" and c.parent.exists():
-            return str(c.parent)
-        if c.exists() and (c / "config.json").exists():
-            return str(c)
+    """Find Nemotron weights from competition Models input or offline bundle."""
+    try:
+        import kagglehub
+        path = kagglehub.model_download("metric/nemotron-3-nano-30b-a3b-bf16/transformers/default")
+        if path and Path(path).exists():
+            return str(path)
+    except Exception:
+        pass
+
+    for cfg in Path("/kaggle/input").rglob("config.json"):
+        parent = cfg.parent
+        if (parent / "model.safetensors.index.json").exists() or any(
+            parent.glob("model-*.safetensors")
+        ):
+            return str(parent)
+
+    for entry in sorted(Path("/kaggle/input").iterdir()):
+        for candidate in (
+            entry / "nemotron-base",
+            entry / "nemotron-blackwell-offline" / "nemotron-base",
+        ):
+            if (candidate / "config.json").exists():
+                return str(candidate)
     return None
 
 
