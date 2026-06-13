@@ -9,7 +9,7 @@ def main():
     dry_run_output = "outputs/dry_run_adapter"
     
     # Check if dataset exists
-    dataset_path = "data/sft_reasoning_dataset.jsonl"
+    dataset_path = "data/sft_reasoning_dataset_v2.jsonl"
     if not os.path.exists(dataset_path):
         print(f"❌ Error: SFT dataset not found at '{dataset_path}'! Please compile Phase 3 dataset first.")
         sys.exit(1)

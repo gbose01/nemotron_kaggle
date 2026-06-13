@@ -1,20 +1,16 @@
 #!/usr/bin/env python3
-"""Full BF16 LoRA SFT for Nemotron-3-Nano-30B on RTX PRO 6000 (Blackwell).
+"""Full BF16 LoRA SFT for Nemotron-3-Nano-30B on RunPod (A100/RTX6000).
 
 Mirrors the proven reference notebook recipe:
   - Load the full 30B model in bfloat16 (NO 4-bit / NO Unsloth).
   - Rank-32 LoRA over all-linear modules, alpha = r, dropout 0.0.
-  - NEFTune noise (alpha=5) instead of dropout, cosine LR, 1 epoch.
+  - NEFTune noise (alpha=5) instead of dropout, cosine LR, 2 epochs.
   - Our curated <think> CoT dataset, formatted through the chat template.
 
-Run AFTER restarting the kernel and AFTER the offline env is set up. Example:
-
-  PYTHONPATH=src python3 src/train_blackwell.py \
+Run with:
+  HF_HOME=/workspace/hf_cache PYTHONPATH=src python3 src/train_runpod.py \
       --config src/train_config.yaml \
-      --model_name /kaggle/input/<bundle>/nemotron-base
-
-If --model_name is omitted, the script auto-detects a local Nemotron path
-(offline bundle or kagglehub download).
+      --model_name nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-Base-BF16
 """
 
 from __future__ import annotations
@@ -24,56 +20,24 @@ import inspect
 import os
 from pathlib import Path
 
-import blackwell_env
-
-# Apply Blackwell hardening BEFORE importing torch/transformers model code.
-blackwell_env.apply()
-
-import torch  # noqa: E402
-import yaml  # noqa: E402
-from datasets import load_dataset  # noqa: E402
-from peft import LoraConfig, TaskType, get_peft_model  # noqa: E402
-from transformers import AutoModelForCausalLM, AutoTokenizer  # noqa: E402
-from trl import SFTConfig, SFTTrainer  # noqa: E402
-
-
-def autodetect_model_path() -> str | None:
-    """Find Nemotron weights from competition Models input or offline bundle."""
-    try:
-        import kagglehub
-        path = kagglehub.model_download("metric/nemotron-3-nano-30b-a3b-bf16/transformers/default")
-        if path and Path(path).exists():
-            return str(path)
-    except Exception:
-        pass
-
-    for cfg in Path("/kaggle/input").rglob("config.json"):
-        parent = cfg.parent
-        if (parent / "model.safetensors.index.json").exists() or any(
-            parent.glob("model-*.safetensors")
-        ):
-            return str(parent)
-
-    for entry in sorted(Path("/kaggle/input").iterdir()):
-        for candidate in (
-            entry / "nemotron-base",
-            entry / "nemotron-blackwell-offline" / "nemotron-base",
-        ):
-            if (candidate / "config.json").exists():
-                return str(candidate)
-    return None
+import torch
+import yaml
+from datasets import load_dataset
+from peft import LoraConfig, TaskType, get_peft_model
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from trl import SFTConfig, SFTTrainer
 
 
 def build_sft_block(config: dict) -> dict:
-    """Read the `sft` block from config, falling back to notebook defaults."""
+    """Read the `sft` block from config, falling back to RunPod defaults."""
     sft = config.get("sft", {}) if isinstance(config, dict) else {}
     return {
         "lora_rank": int(sft.get("lora_rank", 32)),
         "lora_alpha": int(sft.get("lora_alpha", 32)),
         "lora_dropout": float(sft.get("lora_dropout", 0.0)),
         "neftune_alpha": float(sft.get("neftune_noise_alpha", 5)),
-        "max_seq_len": int(sft.get("max_seq_length", 1536)),
-        "num_epochs": float(sft.get("epochs", 1)),
+        "max_seq_len": int(sft.get("max_seq_length", 2048)), # Increased to 2048 for full CoT
+        "num_epochs": float(sft.get("epochs", 2)), # Increased to 2 for larger dataset
         "batch_size": int(sft.get("batch_size", 1)),
         "grad_accum": int(sft.get("grad_accum", 4)),
         "lr": float(sft.get("learning_rate", 2e-4)),
@@ -86,11 +50,11 @@ def build_sft_block(config: dict) -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Full BF16 LoRA SFT on Blackwell")
+    parser = argparse.ArgumentParser(description="Full BF16 LoRA SFT on RunPod")
     parser.add_argument("--config", default="src/train_config.yaml")
-    parser.add_argument("--model_name", default=None,
-                        help="Local model path or HF id. Auto-detected if omitted.")
-    parser.add_argument("--data", default="data/sft_reasoning_dataset.jsonl")
+    parser.add_argument("--model_name", default="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-Base-BF16",
+                        help="Local model path or HF id.")
+    parser.add_argument("--data", default="data/sft_reasoning_dataset_v2.jsonl")
     parser.add_argument("--output_dir", default="outputs/nemotron_lora_adapter")
     parser.add_argument("--max_steps", type=int, default=None,
                         help="Override num_train_epochs; useful for quick tests")
@@ -100,10 +64,9 @@ def main() -> None:
         config = yaml.safe_load(f) or {}
     hp = build_sft_block(config)
 
-    model_name = args.model_name or autodetect_model_path() \
-        or config.get("model", {}).get("base_model_name")
+    model_name = args.model_name
     if not model_name:
-        raise SystemExit("No model path. Pass --model_name or attach the offline bundle.")
+        raise SystemExit("No model path. Pass --model_name.")
 
     output_dir = args.output_dir
     os.makedirs(output_dir, exist_ok=True)
@@ -120,7 +83,12 @@ def main() -> None:
     tokenizer.model_max_length = hp["max_seq_len"]
 
     # ---- Dataset: format prompt/completion via the chat template ----
+    # Implementing 90/10 split
     dataset = load_dataset("json", data_files=args.data)["train"]
+    split_dataset = dataset.train_test_split(test_size=0.1, seed=42)
+    
+    train_dataset = split_dataset["train"]
+    val_dataset = split_dataset["test"]
 
     def build_training_text(example):
         user_msg = (
@@ -142,8 +110,11 @@ def main() -> None:
             )
         return {"text": text}
 
-    dataset = dataset.map(build_training_text, remove_columns=dataset.column_names)
-    print(f"Loaded {len(dataset)} examples. Sample:\n{dataset[0]['text'][:400]}")
+    train_dataset = train_dataset.map(build_training_text, remove_columns=train_dataset.column_names)
+    val_dataset = val_dataset.map(build_training_text, remove_columns=val_dataset.column_names)
+    
+    print(f"Loaded {len(train_dataset)} training and {len(val_dataset)} validation examples.")
+    print(f"Sample:\n{train_dataset[0]['text'][:400]}")
 
     # ---- Model (full BF16) ----
     print("Loading model in bfloat16 ...")
@@ -153,11 +124,6 @@ def main() -> None:
         device_map="auto",
         trust_remote_code=True,
     )
-
-    n_fast = blackwell_env.disable_fast_path(model)
-    print(f"Disabled fast path on {n_fast} module(s)")
-    n_frozen = blackwell_env.freeze_routers(model)
-    print(f"Froze {n_frozen} MoE router param(s)")
 
     if hp["grad_ckpt"]:
         model.gradient_checkpointing_enable()
@@ -189,7 +155,8 @@ def main() -> None:
         max_grad_norm=1.0,
         neftune_noise_alpha=hp["neftune_alpha"],
         logging_steps=hp["logging_steps"],
-        save_strategy="no",
+        eval_strategy="epoch",
+        save_strategy="epoch",
         gradient_checkpointing=hp["grad_ckpt"],
         gradient_checkpointing_kwargs={"use_reentrant": False},
         report_to="none",
@@ -210,7 +177,8 @@ def main() -> None:
 
     trainer = SFTTrainer(
         model=model,
-        train_dataset=dataset,
+        train_dataset=train_dataset,
+        eval_dataset=val_dataset,
         args=SFTConfig(**sft_kwargs),
     )
 

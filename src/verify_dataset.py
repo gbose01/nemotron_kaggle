@@ -3,7 +3,7 @@ import json
 import re
 
 class SftDatasetVerifier:
-    def __init__(self, dataset_path="data/sft_reasoning_dataset.jsonl"):
+    def __init__(self, dataset_path="data/sft_reasoning_dataset_v2.jsonl"):
         self.dataset_path = dataset_path
 
     def verify(self):

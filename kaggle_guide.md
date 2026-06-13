@@ -112,9 +112,9 @@ imports passed in Cell 2.
 
 ```python
 %cd /kaggle/working/nemotron_kaggle
-!PYTHONPATH=src python3 src/train_blackwell.py \
+!PYTHONPATH=src python3 src/train_runpod.py \
   --config src/train_config.yaml \
-  --data data/sft_reasoning_dataset.jsonl \
+  --data data/sft_reasoning_dataset_v2.jsonl \
   --output_dir outputs/nemotron_lora_adapter
 ```
 
@@ -208,5 +208,5 @@ Reduce `sft.max_seq_length` in `train_config.yaml` or use smaller batch.
 
 **Full training path:**
 - [ ] Same inputs as smoke test
-- [ ] `train_blackwell.py` completes (~1 h)
+- [ ] `train_runpod.py` completes (~1 h)
 - [ ] `submission.zip` includes adapter + tokenizer files

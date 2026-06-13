@@ -74,7 +74,7 @@ def main() -> None:
     ap.add_argument("--adapter", default="outputs/nemotron_lora_adapter")
     ap.add_argument("--train_csv", required=True)
     ap.add_argument("--n_per_type", type=int, default=10)
-    ap.add_argument("--max_new_tokens", type=int, default=512)
+    ap.add_argument("--max_new_tokens", type=int, default=2048)
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
 

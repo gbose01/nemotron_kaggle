@@ -206,4 +206,19 @@ the tokenizer-inclusive packaging.
 - **kagglehub model path differs from offline bundle path.** → `train_blackwell.py` takes
   `--model_name` and auto-detects both `/kaggle/input/.../nemotron-base` and the kagglehub
   download path.
-```
+
+---
+
+## 7. The RunPod Pivot (Internet-ON Alternative)
+
+Given the extreme fragility of the offline Kaggle Blackwell environment, we built a fully documented `runpod_guide.md` to train the model on a standard RunPod A100/H100 instance instead.
+
+**Key Learnings from the RunPod Environment:**
+1. **PyTorch ABI Mismatch:** Running `pip install causal-conv1d mamba-ssm` natively often crashes because `pip` tries to upgrade PyTorch to a CUDA 13.0 version while the RunPod system compiler is CUDA 12.4.
+   * *Fix:* We explicitly pin `torch==2.4.1` (cu124) and build the extensions with `--no-deps` to prevent upgrades.
+2. **PyTorch Inductor Crashes:** If `triton` gets upgraded to `>=3.5.0` (which `mamba-ssm` requests), PyTorch 2.4.1's `compile_worker` throws `triton_key` import errors.
+   * *Fix:* We strictly pin `triton==3.0.0`. Since we disable the Mamba fast-path anyway (`blackwell_env.disable_fast_path`), `mamba-ssm` runs perfectly on the older Triton version.
+3. **Container Disk Out-of-Memory:** Hugging Face downloads default to `~/.cache/huggingface`, which sits on the tiny temporary Container Disk, instantly crashing the pod.
+   * *Fix:* We prepend `HF_HOME=/workspace/hf_cache` to the training command to force the 60GB model download onto the persistent Volume Disk.
+
+The output `submission.zip` from RunPod has been verified to structure identically to the Kaggle notebook output and can be submitted directly to the leaderboard.

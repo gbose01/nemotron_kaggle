@@ -133,8 +133,8 @@ class SyntheticGenerator:
                 "completion": cot
             })
             
-        # Append to sft_reasoning_dataset.jsonl
-        output_path = "data/sft_reasoning_dataset.jsonl"
+        # Append to sft_reasoning_dataset_v2.jsonl
+        output_path = "data/sft_reasoning_dataset_v2.jsonl"
         with open(output_path, "a") as f:
             for item in synthetic_puzzles:
                 f.write(json.dumps(item) + "\n")
