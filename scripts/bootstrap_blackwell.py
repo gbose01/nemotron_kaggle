@@ -17,10 +17,12 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 
 
@@ -29,7 +31,6 @@ DEFAULT_REPO = "https://github.com/gbose01/nemotron_kaggle.git"
 DEFAULT_ROOT = Path("/kaggle/temp/nemotron-blackwell-offline")
 
 WHEEL_PACKAGES = [
-    "unsloth",
     "transformers",
     "peft",
     "trl",
@@ -39,8 +40,6 @@ WHEEL_PACKAGES = [
     "pyyaml",
     "einops",
     "triton",
-    "causal-conv1d",
-    "mamba-ssm",
     "huggingface_hub",
     "hf_transfer",
     "sentencepiece",
@@ -54,6 +53,25 @@ WHEEL_PACKAGES = [
     "requests",
     "tqdm",
     "psutil",
+]
+
+# No PyPI wheels for cp312+cu128 — fetch GitHub prebuilt wheels during T4
+# bootstrap (matches Kaggle Blackwell's torch 2.10+cu128).  Fall back to sdists
+# only if a wheel 404s.
+CUDA_GITHUB_WHEELS = [
+    (
+        "https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.5.0.post8/"
+        "causal_conv1d-1.5.0.post8+cu12torch2.6cxx11abiFALSE-cp312-cp312-linux_x86_64.whl"
+    ),
+    (
+        "https://github.com/state-spaces/mamba/releases/download/v2.2.4/"
+        "mamba_ssm-2.2.4+cu12torch2.6cxx11abiFALSE-cp312-cp312-linux_x86_64.whl"
+    ),
+]
+
+CUDA_SDIST_PACKAGES = [
+    "causal-conv1d",
+    "mamba-ssm",
 ]
 
 
@@ -126,6 +144,56 @@ def download_python_wheels(wheels_dir: Path) -> None:
     )
 
 
+def download_pypi_sdist(package: str, dest_dir: Path) -> Path:
+    """Download latest PyPI sdist tarball without invoking pip (avoids build isolation)."""
+    meta_url = f"https://pypi.org/pypi/{package}/json"
+    with urllib.request.urlopen(meta_url, timeout=120) as resp:
+        meta = json.load(resp)
+    sdists = [u for u in meta["urls"] if u.get("packagetype") == "sdist"]
+    if not sdists:
+        raise RuntimeError(f"No sdist found on PyPI for {package}")
+    # Prefer latest release entry; fall back to first sdist URL.
+    info = meta.get("info", {})
+    preferred = info.get("version")
+    chosen = next(
+        (u for u in sdists if preferred and preferred in u.get("filename", "")),
+        sdists[0],
+    )
+    filename = chosen["filename"]
+    out = dest_dir / filename
+    if out.exists() and out.stat().st_size > 0:
+        print(f"Already have {filename}")
+        return out
+    url = chosen["url"]
+    print(f"Downloading sdist {filename} from {url}")
+    with urllib.request.urlopen(url, timeout=600) as resp, out.open("wb") as fh:
+        shutil.copyfileobj(resp, fh)
+    print(f"Saved {out} ({out.stat().st_size / (1024 * 1024):.1f} MB)")
+    return out
+
+
+def download_cuda_github_wheels(wheels_dir: Path) -> None:
+    """Download prebuilt causal-conv1d / mamba-ssm wheels from GitHub releases."""
+    wheels_dir.mkdir(parents=True, exist_ok=True)
+    for url in CUDA_GITHUB_WHEELS:
+        filename = url.rsplit("/", 1)[-1]
+        out = wheels_dir / filename
+        if out.exists() and out.stat().st_size > 1_000_000:
+            print(f"Already have {filename}")
+            continue
+        print(f"Downloading {filename} ...")
+        with urllib.request.urlopen(url, timeout=600) as resp, out.open("wb") as fh:
+            shutil.copyfileobj(resp, fh)
+        print(f"Saved {out} ({out.stat().st_size / (1024 * 1024):.1f} MB)")
+
+
+def download_cuda_sdists(wheels_dir: Path) -> None:
+    """Fallback: stage source tarballs if GitHub wheels are unavailable."""
+    wheels_dir.mkdir(parents=True, exist_ok=True)
+    for package in CUDA_SDIST_PACKAGES:
+        download_pypi_sdist(package, wheels_dir)
+
+
 def download_model(model_id: str, model_dir: Path, token: str | None) -> None:
     from huggingface_hub import snapshot_download
 
@@ -188,9 +256,11 @@ def stage_deps(root: Path, repo_url: str) -> None:
 
     print("\n[deps 1/3] Downloading PyTorch cu128 nightly wheels...")
     download_torch_wheels(wheels_dir)
-    print("\n[deps 2/3] Downloading Python dependency wheels...")
+    print("\n[deps 2/4] Downloading Python dependency wheels...")
     download_python_wheels(wheels_dir)
-    print("\n[deps 3/3] Cloning training repository...")
+    print("\n[deps 3/4] Downloading CUDA extension wheels (GitHub prebuilt)...")
+    download_cuda_github_wheels(wheels_dir)
+    print("\n[deps 4/4] Cloning training repository...")
     clone_repo(repo_url, code_dir)
 
 

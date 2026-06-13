@@ -92,6 +92,8 @@ def main() -> None:
                         help="Local model path or HF id. Auto-detected if omitted.")
     parser.add_argument("--data", default="data/sft_reasoning_dataset.jsonl")
     parser.add_argument("--output_dir", default="outputs/nemotron_lora_adapter")
+    parser.add_argument("--max_steps", type=int, default=None,
+                        help="Override num_train_epochs; useful for quick tests")
     args = parser.parse_args()
 
     with open(args.config, "r", encoding="utf-8") as f:
@@ -174,7 +176,7 @@ def main() -> None:
     # ---- SFTConfig (guard for TRL version differences) ----
     sft_kwargs = dict(
         output_dir=output_dir,
-        num_train_epochs=hp["num_epochs"],
+        num_train_epochs=hp["num_epochs"] if args.max_steps is None else 1,
         per_device_train_batch_size=hp["batch_size"],
         gradient_accumulation_steps=hp["grad_accum"],
         learning_rate=hp["lr"],
@@ -203,6 +205,8 @@ def main() -> None:
     for k, v in optional.items():
         if k in valid:
             sft_kwargs[k] = v
+    if args.max_steps is not None:
+        sft_kwargs["max_steps"] = args.max_steps
 
     trainer = SFTTrainer(
         model=model,

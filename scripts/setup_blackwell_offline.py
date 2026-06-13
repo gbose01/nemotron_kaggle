@@ -23,7 +23,14 @@ from pathlib import Path
 
 def run(cmd: list[str], **kwargs) -> None:
     print("$", " ".join(cmd))
+    kwargs.setdefault("cwd", "/kaggle/working")
     subprocess.run(cmd, check=True, **kwargs)
+
+
+def ensure_safe_cwd() -> None:
+    """Avoid pip getcwd failures when the notebook deleted the kernel cwd."""
+    os.makedirs("/kaggle/working", exist_ok=True)
+    os.chdir("/kaggle/working")
 
 
 def find_competition_model() -> Path | None:
@@ -75,7 +82,8 @@ def find_bundle_parts(explicit: str | None) -> tuple[Path, Path | None, Path]:
                 entry / "nemotron-blackwell-model",
             ):
                 scan(base)
-
+        for bundle in Path("/kaggle/input/notebooks").rglob("nemotron-blackwell-offline"):
+            scan(bundle)
     if model_dir is None:
         model_dir = find_competition_model()
 
@@ -159,8 +167,19 @@ def install_offline(wheels_dir: Path) -> None:
         ]
     )
 
-    # CUDA extensions: try wheel, then build from sdist on Blackwell
-    for pkg in ("causal-conv1d", "mamba-ssm", "triton", "unsloth"):
+    # CUDA extensions: skip if already importable (Blackwell image often has them).
+    # Otherwise install prebuilt wheels from bootstrap; build sdists only as fallback.
+    cuda_pkgs = ("causal-conv1d", "mamba-ssm", "triton")
+    for pkg in cuda_pkgs:
+        import_name = pkg.replace("-", "_")
+        if import_name == "causal_conv1d":
+            import_name = "causal_conv1d"
+        try:
+            __import__(import_name)
+            print(f"{pkg} already importable — skipping install")
+            continue
+        except ImportError:
+            pass
         try:
             run(
                 [
@@ -197,6 +216,7 @@ def copy_code(bundle_code: Path, working_code: Path) -> None:
 
 
 def main() -> None:
+    ensure_safe_cwd()
     parser = argparse.ArgumentParser(description="Offline Blackwell environment setup")
     parser.add_argument("--bundle-root", type=str, default=None)
     parser.add_argument("--working-code", type=str, default="/kaggle/working/nemotron_kaggle")
